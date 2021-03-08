@@ -21,6 +21,7 @@ package com.sk89q.warmroast;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadInfo;
@@ -35,6 +36,7 @@ import java.util.SortedMap;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.TreeMap;
+import java.util.stream.Collectors;
 
 import javax.management.MBeanServerConnection;
 import javax.management.MalformedObjectNameException;
@@ -113,12 +115,12 @@ public class WarmRoast extends TimerTask {
     public void connect() 
             throws IOException, AgentLoadException, AgentInitializationException {
         // Load the agent
-        String connectorAddr = vm.getAgentProperties().getProperty(
-                "com.sun.management.jmxremote.localConnectorAddress");
+        String connectorAddr = vm.getAgentProperties().getProperty("com.sun.management.jmxremote.localConnectorAddress");
         if (connectorAddr == null) {
             String agent = vm.getSystemProperties().getProperty("java.home")
                     + File.separator + "lib" + File.separator
                     + "management-agent.jar";
+            System.out.println("debug - agent = " + agent);
             vm.loadAgent(agent);
             connectorAddr = vm.getAgentProperties().getProperty(
                     "com.sun.management.jmxremote.localConnectorAddress");
@@ -156,21 +158,30 @@ public class WarmRoast extends TimerTask {
             }
         }
         
-        ThreadInfo[] threadDumps = threadBean.dumpAllThreads(false, false);
-        for (ThreadInfo threadInfo : threadDumps) {
-            String threadName = threadInfo.getThreadName();
-            StackTraceElement[] stack = threadInfo.getStackTrace();
-            
-            if (threadName == null || stack == null) {
-                continue;
+        //try in case of the monitored vm crashes/stops
+        try {
+            ThreadInfo[] threadDumps = threadBean.dumpAllThreads(false, false);
+            for (ThreadInfo threadInfo : threadDumps) {
+                String threadName = threadInfo.getThreadName();
+                StackTraceElement[] stack = threadInfo.getStackTrace();
+
+                if (threadName == null || stack == null) {
+                    continue;
+                }
+
+                if (filterThread != null && !filterThread.equals(threadName)) {
+                    continue;
+                }
+
+                StackNode node = getNode(threadName);
+                node.log(stack, interval);
             }
-            
-            if (filterThread != null && !filterThread.equals(threadName)) {
-                continue;
-            }
-            
-            StackNode node = getNode(threadName);
-            node.log(stack, interval);
+        }
+        catch (Exception e){
+            System.err.println("There was an error while monitoring the jvm");
+            System.err.println("Warmroast is stopping");
+            cancel();
+            System.exit(3);
         }
     }
 
@@ -214,6 +225,14 @@ public class WarmRoast extends TimerTask {
         System.err.println(SEPARATOR);
         System.err.println("");
         
+        //remove the jvm launching warmroast
+        List<VirtualMachineDescriptor> virtualMachineDescriptors = VirtualMachine.list().stream()
+                .filter(vmd -> !vmd.displayName().contains("com.sk89q.warmroast.WarmRoast"))
+                .collect(Collectors.toList());;
+        if (virtualMachineDescriptors.size() == 0){
+            System.err.println("There is no jvm to sample, launch one first.");
+            System.exit(1);
+        }
         VirtualMachine vm = null;
         
         if (opt.pid != null) {
@@ -246,7 +265,7 @@ public class WarmRoast extends TimerTask {
             List<VirtualMachineDescriptor> descriptors = VirtualMachine.list();
             System.err.println("Choose a VM:");
             
-            Collections.sort(descriptors, new Comparator<VirtualMachineDescriptor>() {
+            Collections.sort(virtualMachineDescriptors, new Comparator<VirtualMachineDescriptor>() {	
                 @Override
                 public int compare(VirtualMachineDescriptor o1,
                         VirtualMachineDescriptor o2) {
@@ -256,8 +275,68 @@ public class WarmRoast extends TimerTask {
             
             // Print list of VMs
             int i = 1;
-            for (VirtualMachineDescriptor desc : descriptors) {
-                System.err.println("[" + (i++) + "] " + desc.displayName());
+            for (VirtualMachineDescriptor desc : virtualMachineDescriptors) {
+
+            	// for spigot or forge java processes we get the parent process as it contains the server name
+            	if (desc.displayName().contains("spigot.jar") ||  desc.displayName().contains("ForgeMod.jar")) {
+            		// get parent process id
+            		Process p = null;
+            		try {
+            			p = Runtime.getRuntime().exec("ps -o ppid= -p "+desc.id());
+            		} catch (IOException e1) {
+            			// TODO Auto-generated catch block
+            			e1.printStackTrace();
+            		}
+            		InputStream is = p.getInputStream(); //or p.getErrorStream() on error
+            		int c;
+            		StringBuilder commandResponse = new StringBuilder();
+            		try {
+            			while( (c = is.read()) != -1) {    //read until end of stream
+            				commandResponse.append((char)c);
+            			}
+            		} catch (IOException e) {
+            			// TODO Auto-generated catch block
+            			e.printStackTrace();
+            		}
+            		try {
+            			is.close();
+            		} catch (IOException e) {
+            			// TODO Auto-generated catch block
+            			e.printStackTrace();
+            		}
+          		
+            		// get parent process detail 
+            		try {
+            			p = Runtime.getRuntime().exec("ps -p "+commandResponse.toString());
+            		} catch (IOException e1) {
+            			// TODO Auto-generated catch block
+            			e1.printStackTrace();
+            		}
+            		is = p.getInputStream(); //or p.getErrorStream() on error
+            		commandResponse = new StringBuilder();
+
+            		try {
+            			while( (c = is.read()) != -1) {    //read until end of stream
+            				commandResponse.append((char)c);
+            			}
+            		} catch (IOException e) {
+            			// TODO Auto-generated catch block
+            			e.printStackTrace();
+            		}
+            		try {
+            			is.close();
+            		} catch (IOException e) {
+            			// TODO Auto-generated catch block
+            			e.printStackTrace();
+            		}               
+
+            		// parse result into lines and get the process description
+            		String[] tokens = commandResponse.toString().split("\n");
+
+            		System.err.println("[" + (i++) + "] " + tokens[1] + "(server pid=" + desc.id() +")");
+            	} else {
+            		System.err.println("[" + (i++) + "] " + desc.displayName() + ": pid=" + desc.id());
+            	}
             }
             
             // Ask for choice
@@ -279,7 +358,7 @@ public class WarmRoast extends TimerTask {
                     System.err.println("Given choice is out of range.");
                     System.exit(1);
                 }
-                vm = VirtualMachine.attach(descriptors.get(choice));
+                vm = VirtualMachine.attach(virtualMachineDescriptors.get(choice));
             } catch (NumberFormatException e) {
                 System.err.println("");
                 System.err.println("That's not a number. Bye.");
