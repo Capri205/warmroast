@@ -21,7 +21,6 @@ package com.sk89q.warmroast;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadInfo;
@@ -117,13 +116,8 @@ public class WarmRoast extends TimerTask {
         // Load the agent
         String connectorAddr = vm.getAgentProperties().getProperty("com.sun.management.jmxremote.localConnectorAddress");
         if (connectorAddr == null) {
-            String agent = vm.getSystemProperties().getProperty("java.home")
-                    + File.separator + "lib" + File.separator
-                    + "management-agent.jar";
-            System.out.println("debug - agent = " + agent);
-            vm.loadAgent(agent);
-            connectorAddr = vm.getAgentProperties().getProperty(
-                    "com.sun.management.jmxremote.localConnectorAddress");
+        	vm.startLocalManagementAgent();
+            connectorAddr = vm.getAgentProperties().getProperty("com.sun.management.jmxremote.localConnectorAddress");
         }
 
         // Connect
@@ -267,8 +261,7 @@ public class WarmRoast extends TimerTask {
             
             Collections.sort(virtualMachineDescriptors, new Comparator<VirtualMachineDescriptor>() {	
                 @Override
-                public int compare(VirtualMachineDescriptor o1,
-                        VirtualMachineDescriptor o2) {
+                public int compare(VirtualMachineDescriptor o1, VirtualMachineDescriptor o2) {
                     return o1.displayName().compareTo(o2.displayName());
                 }
             });
@@ -279,63 +272,16 @@ public class WarmRoast extends TimerTask {
 
             	// for spigot or forge java processes we get the parent process as it contains the server name
             	if (desc.displayName().contains("spigot.jar") ||  desc.displayName().contains("ForgeMod.jar")) {
-            		// get parent process id
-            		Process p = null;
-            		try {
-            			p = Runtime.getRuntime().exec("ps -o ppid= -p "+desc.id());
-            		} catch (IOException e1) {
-            			// TODO Auto-generated catch block
-            			e1.printStackTrace();
-            		}
-            		InputStream is = p.getInputStream(); //or p.getErrorStream() on error
-            		int c;
-            		StringBuilder commandResponse = new StringBuilder();
-            		try {
-            			while( (c = is.read()) != -1) {    //read until end of stream
-            				commandResponse.append((char)c);
-            			}
-            		} catch (IOException e) {
-            			// TODO Auto-generated catch block
-            			e.printStackTrace();
-            		}
-            		try {
-            			is.close();
-            		} catch (IOException e) {
-            			// TODO Auto-generated catch block
-            			e.printStackTrace();
-            		}
-          		
-            		// get parent process detail 
-            		try {
-            			p = Runtime.getRuntime().exec("ps -p "+commandResponse.toString());
-            		} catch (IOException e1) {
-            			// TODO Auto-generated catch block
-            			e1.printStackTrace();
-            		}
-            		is = p.getInputStream(); //or p.getErrorStream() on error
-            		commandResponse = new StringBuilder();
-
-            		try {
-            			while( (c = is.read()) != -1) {    //read until end of stream
-            				commandResponse.append((char)c);
-            			}
-            		} catch (IOException e) {
-            			// TODO Auto-generated catch block
-            			e.printStackTrace();
-            		}
-            		try {
-            			is.close();
-            		} catch (IOException e) {
-            			// TODO Auto-generated catch block
-            			e.printStackTrace();
-            		}               
-
-            		// parse result into lines and get the process description
-            		String[] tokens = commandResponse.toString().split("\n");
-
-            		System.err.println("[" + (i++) + "] " + tokens[1] + "(server pid=" + desc.id() +")");
+            		
+            		// try to get server name by looking for --server-name or just use the descriptor display name
+            		String servername = desc.displayName();
+            		if ( desc.displayName().contains("--server-name")) {
+            			servername = desc.displayName().substring( desc.displayName().indexOf("--server-name")+14, desc.displayName().length());
+            		}          		
+             		System.out.println("[" + (i++) + "] " + servername + " (server pid=" + desc.id() +")");
+             		
             	} else {
-            		System.err.println("[" + (i++) + "] " + desc.displayName() + ": pid=" + desc.id());
+            		System.out.println("[" + (i++) + "] " + desc.displayName() + ": pid=" + desc.id());
             	}
             }
             
