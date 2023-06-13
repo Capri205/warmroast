@@ -44,9 +44,13 @@ import javax.management.remote.JMXConnector;
 import javax.management.remote.JMXConnectorFactory;
 import javax.management.remote.JMXServiceURL;
 
+import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.server.handler.ContextHandler;
+import org.eclipse.jetty.server.handler.ContextHandlerCollection;
 import org.eclipse.jetty.server.handler.HandlerList;
 import org.eclipse.jetty.server.handler.ResourceHandler;
+import org.eclipse.jetty.servlet.DefaultServlet;
 import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
 
@@ -59,8 +63,7 @@ import com.sun.tools.attach.VirtualMachineDescriptor;
 
 public class WarmRoast extends TimerTask {
 
-    private static final String SEPARATOR = 
-            "------------------------------------------------------------------------";
+    private static final String SEPARATOR = "------------------------------------------------------------------------";
     
     private final int interval;
     private final VirtualMachine vm;
@@ -184,7 +187,7 @@ public class WarmRoast extends TimerTask {
         
         Server server = new Server(address);
 
-        ServletContextHandler context = new ServletContextHandler();
+        ServletContextHandler context = new ServletContextHandler(ServletContextHandler.SESSIONS);
         context.setContextPath("/");
         context.addServlet(new ServletHolder(new DataViewServlet(this)), "/stack");
 
@@ -193,19 +196,20 @@ public class WarmRoast extends TimerTask {
         resources.setResourceBase(filesDir);
         resources.setDirectoriesListed(true);
         resources.setWelcomeFiles(new String[]{ "index.html" });
- 
-        HandlerList handlers = new HandlerList();
-        handlers.addHandler(context);
-        handlers.addHandler(resources);
-        server.setHandler(handlers);
-
+        ContextHandler c_resources = new ContextHandler();
+        c_resources.setHandler(resources);
+        
+        ContextHandlerCollection c_handlers = new ContextHandlerCollection();
+        c_handlers.setHandlers( new Handler[] { c_resources, context } );
+        server.setHandler(c_handlers);
+        
         server.start();
         server.join();
     }
 
     public static void main(String[] args) throws AgentLoadException {
         RoastOptions opt = new RoastOptions();
-        JCommander jc = new JCommander(opt, args);
+        JCommander jc = new JCommander(opt, null, args);
         jc.setProgramName("warmroast");
         
         if (opt.help) {
